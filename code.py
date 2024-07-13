@@ -18,6 +18,7 @@ import terminalio
 from adafruit_display_text import label
 import adafruit_il0373
 import gc
+import microcontroller
 
 try:
     from fourwire import FourWire
@@ -190,11 +191,7 @@ def get_tide_info(requests):
     #    TIDE_URL_TOMORROW = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=tomorrow&range=48&station=8446121&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=DataAPI_Sample&format=json"
     #    TIDE_URL_BEGIN = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=20240628&end_date=20240629&station=8446121&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&format=json"
     today = datetime.now()
-    print(today)
-    print(today.month)
-    print(today.year)
-    print(today.day)
-    
+
     tom_time_struct = time.localtime(time.time() + 24*3600)
 
     TIDE_URL = (
@@ -209,7 +206,7 @@ def get_tide_info(requests):
 
     print(TIDE_URL)
     pTownTides = []
-    
+
     with requests.get(TIDE_URL) as tides:
         for item in tides.json()["predictions"]:
             # the_datetime is now a datetime type
@@ -249,7 +246,7 @@ def display_things(display, tides):
         text += "\n"
 
     text_area = label.Label(terminalio.FONT, text=text, color=FOREGROUND_COLOR)
-    
+
     # Set scaling factor for display text
     my_scale = 1
 
@@ -263,7 +260,7 @@ def display_things(display, tides):
     # Refresh the display to have everything show on the display
     # NOTE: Do not refresh eInk displays more often than 180 seconds!
     display.refresh()
-    
+
     del background_bitmap
     del g
     del text_area
@@ -283,33 +280,32 @@ def main():
     display = configure_display(spi)
     wifi_connection = connect_wifi(wifi)
     count = 0
-#    while True:
-#        if count > 5:
-#            print("we got 5 exceptions")
-#            break
-#            microcontroller.reset()
-#        try:
-    print("going to start at the beginning")
-    if not wifi_connection.is_connected:
-        wifi_connection = connect_wifi(wifi)
+    while True:
+        if count > 5:
+            print("we got 5 exceptions")
+            microcontroller.reset()
+        try:
+            print("going to start at the beginning")
+            if not wifi_connection.is_connected:
+                wifi_connection = connect_wifi(wifi)
 
-    update_rtc_time(wifi, pool, ssl_context, requests)
+            update_rtc_time(wifi, pool, ssl_context, requests)
 
-    tides = get_tide_info(requests)
+            tides = get_tide_info(requests)
 
-    gc.collect()
-    start_mem = gc.mem_free()
-    print( "Point 2 Available memory: {} bytes".format(start_mem) )
+            gc.collect()
+            start_mem = gc.mem_free()
+            print( "Point 2 Available memory: {} bytes".format(start_mem) )
 
-    display_things(display, tides)
-    # sleep for 2 hours
-    time.sleep(2 * 60 * 60)
-            #sleep for 3 minutes
-#            time.sleep(180)
+            display_things(display, tides)
+            # sleep for 2 hours
+            time.sleep(2 * 60 * 60)
+                    #sleep for 3 minutes
+        #            time.sleep(180)
 
-#    except:
-#            print("we got an exception")
-#            count = count + 1
+        except:
+            print("we got an exception")
+            count = count + 1
 
 
 # Using the special variable
