@@ -1,5 +1,5 @@
 # eink-tides
-### Video Demo:  (https://youtu.be/dMhMmFg1iJU)
+### Video Demo:  https://youtu.be/dMhMmFg1iJU
 ## Description:
 This is my Final CS50 project and I wrote a circuitpython project that gathers the ocean tide information and displays the next 4 tides on an eink display 
 I live by the ocean and it’s very helpful to know when the tide times are.
