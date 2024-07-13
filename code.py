@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: 2019 ladyada for Adafruit Industries
-# SPDX-License-Identifier: MIT
-
 from os import getenv
 import board
 import busio
@@ -38,17 +35,20 @@ BACKGROUND_COLOR = WHITE
 DISPLAY_WIDTH = 296
 DISPLAY_HEIGHT = 128
 
-# for the featherwing
+# Set up GPIOs for the featherwing
+# WiFi Chip Selects
 wifi_cs = DigitalInOut(board.D13)
 wifi_ready = DigitalInOut(board.D11)
 wifi_reset = DigitalInOut(board.D12)
-# eink display
+
+# eink display chip selects
 epd_cs = board.D9
 epd_dc = board.D10
 epd_reset = board.D5
 epd_busy = board.D6
 
-
+# Functions to configure the Hardware
+# SPI Transport configuration  (Display and Wifi Communication over SPI)
 def configure_spi():
     print("starting configure_spi")
     displayio.release_displays()
@@ -62,7 +62,7 @@ def configure_spi():
     print("ending configure_spi")
     return spi
 
-
+# Function to configure the Wifi board
 def configure_wifi_hardware(spi):
     wifi = adafruit_esp32spi.ESP_SPIcontrol(spi, wifi_cs, wifi_ready, wifi_reset)
 
@@ -78,6 +78,7 @@ def configure_wifi_hardware(spi):
     return wifi, pool, ssl_context, requests
 
 
+#Function to Configure the Display
 def configure_display(spi):
     print("configure display")
     # Used to ensure the display is free in CircuitPython
@@ -102,21 +103,7 @@ def configure_display(spi):
     )
     return display
 
-
-def update_rtc_time(wifi_connection, pool, ssl_context, requests):
-    print("updating RTC")
-    with requests.get(TIME_URL) as response:
-        time_data = response.json()
-        tz_hour_offset = int(time_data["utc_offset"][0:3])
-        tz_min_offset = int(time_data["utc_offset"][4:6])
-        if tz_hour_offset < 0:
-            tz_min_offset *= -1
-        unixtime = int(time_data["unixtime"] + (tz_hour_offset * 60 * 60)) + (
-            tz_min_offset * 60
-        )
-        rtc.RTC().datetime = time.localtime(unixtime)
-
-
+# This will request Wifi to connect to my local router and then the internet
 def connect_wifi(wifi):
     # Get wifi details and more from a settings.toml file
     # tokens used by this Demo: CIRCUITPY_WIFI_SSID, CIRCUITPY_WIFI_PASSWORD
@@ -146,10 +133,26 @@ def connect_wifi(wifi):
     print("Connected to", str(wifi.ssid, "utf-8"), "\tRSSI:", wifi.rssi)
     return wifi
 
+# Optional to disconnect Wifi 
 def disconnect_wifi(wifi_connection, pool, ssl_context, requests):
     print("disconnecting from wifi")
     wifi_connection.disconnect()
 
+# Update the Real Time clock on the MCU
+def update_rtc_time(wifi_connection, pool, ssl_context, requests):
+    print("updating RTC")
+    with requests.get(TIME_URL) as response:
+        time_data = response.json()
+        tz_hour_offset = int(time_data["utc_offset"][0:3])
+        tz_min_offset = int(time_data["utc_offset"][4:6])
+        if tz_hour_offset < 0:
+            tz_min_offset *= -1
+        unixtime = int(time_data["unixtime"] + (tz_hour_offset * 60 * 60)) + (
+            tz_min_offset * 60
+        )
+        rtc.RTC().datetime = time.localtime(unixtime)
+
+# Create the time string that we'll be displaying
 def CreateTimeString(item, now):
     the_datetime = datetime.fromisoformat(item["t"])
     theTime = ""
@@ -185,15 +188,14 @@ def CreateTimeString(item, now):
     print(theTime)
     return theTime
 
+# Query the NOAA endpoint closest to PTown for the Local tide information
 def get_tide_info(requests):
 
-    #    TIDE_URL_TODAY = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=today&range=48&station=8446121&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=DataAPI_Sample&format=json"
-    #    TIDE_URL_TOMORROW = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?date=tomorrow&range=48&station=8446121&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=DataAPI_Sample&format=json"
-    #    TIDE_URL_BEGIN = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=20240628&end_date=20240629&station=8446121&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&format=json"
     today = datetime.now()
 
     tom_time_struct = time.localtime(time.time() + 24*3600)
 
+    # Construct the URL to use Today's date and tomorrow's date
     TIDE_URL = (
         "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?begin_date=" +
         str(today.year) +
@@ -207,6 +209,7 @@ def get_tide_info(requests):
     print(TIDE_URL)
     pTownTides = []
 
+    # get the Tide information
     with requests.get(TIDE_URL) as tides:
         for item in tides.json()["predictions"]:
             # the_datetime is now a datetime type
@@ -216,7 +219,7 @@ def get_tide_info(requests):
 
     return pTownTides
 
-
+# Display the tide info on the display
 def display_things(display, tides):
     print("entering display_things")
 
@@ -281,6 +284,9 @@ def main():
     wifi_connection = connect_wifi(wifi)
     count = 0
     while True:
+        # It seems like the display controller can get hung up 
+        # if we run into this exception 5 times let's just reset the 
+        # processor
         if count > 5:
             print("we got 5 exceptions")
             microcontroller.reset()
@@ -298,10 +304,8 @@ def main():
             print( "Point 2 Available memory: {} bytes".format(start_mem) )
 
             display_things(display, tides)
-            # sleep for 2 hours
+            # sleep for 2 hours and then we'll query again for updates
             time.sleep(2 * 60 * 60)
-                    #sleep for 3 minutes
-        #            time.sleep(180)
 
         except:
             print("we got an exception")
