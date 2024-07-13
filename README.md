@@ -43,6 +43,6 @@ To have this connect to your wifi router, you'll need to create a settings.toml 
 And then reset and it'll do the thing
 
 
-![Viola]([https://myoctocat.com/assets/images/base-octocat.svg](https://github.com/hiteshptrivedi/eink-tides/blob/main/Final%20project.jpg)
+![Viola](https://github.com/hiteshptrivedi/eink-tides/blob/main/Final%20project.jpg)
 
 Enjoy
