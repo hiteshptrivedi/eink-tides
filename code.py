@@ -16,6 +16,7 @@ from adafruit_display_text import label
 import adafruit_il0373
 import gc
 import microcontroller
+import alarm
 
 try:
     from fourwire import FourWire
@@ -27,6 +28,10 @@ TIMEZONE = "America/New_York"
 BLACK = 0x000000
 WHITE = 0xFFFFFF
 RED = 0xFF0000
+
+# Power management settings
+UPDATE_INTERVAL_HOURS = 2  # How often to update (in hours)
+DEEP_SLEEP_ENABLED = True  # Enable deep sleep for power saving
 # Change text colors, choose from the following values:
 # BLACK, RED, WHITE
 FOREGROUND_COLOR = BLACK
@@ -133,7 +138,7 @@ def connect_wifi(wifi):
     print("Connected to", str(wifi.ssid, "utf-8"), "\tRSSI:", wifi.rssi)
     return wifi
 
-# Optional to disconnect Wifi 
+# Optional to disconnect Wifi
 def disconnect_wifi(wifi_connection, pool, ssl_context, requests):
     print("disconnecting from wifi")
     wifi_connection.disconnect()
@@ -141,30 +146,35 @@ def disconnect_wifi(wifi_connection, pool, ssl_context, requests):
 # Update the Real Time clock on the MCU
 def update_rtc_time(wifi_connection, pool, ssl_context, requests):
     print("updating RTC")
-    with requests.get(TIME_URL) as response:
-        time_data = response.json()
-        tz_hour_offset = int(time_data["utc_offset"][0:3])
-        tz_min_offset = int(time_data["utc_offset"][4:6])
-        if tz_hour_offset < 0:
-            tz_min_offset *= -1
-        unixtime = int(time_data["unixtime"] + (tz_hour_offset * 60 * 60)) + (
-            tz_min_offset * 60
-        )
-        rtc.RTC().datetime = time.localtime(unixtime)
+    try:
+        with requests.get(TIME_URL) as response:
+            time_data = response.json()
+            tz_offset_str = time_data["utc_offset"]
+            tz_hour_offset = int(tz_offset_str[0:3])
+            tz_min_offset = int(tz_offset_str[4:6])
+
+            # Handle negative timezone offsets correctly
+            if tz_offset_str[0] == '-':
+                tz_min_offset = -tz_min_offset
+
+            unixtime = int(time_data["unixtime"] + (tz_hour_offset * 60 * 60) + (tz_min_offset * 60))
+            rtc.RTC().datetime = time.localtime(unixtime)
+    except Exception as e:
+        print("Error updating RTC:", e)
 
 # Create the time string that we'll be displaying
 def CreateTimeString(item, now):
     the_datetime = datetime.fromisoformat(item["t"])
     theTime = ""
-    count = 0
-    print(count, now, the_datetime)
-    if ((now < the_datetime) and (count < 4)):
-        count = count + 1
+    print(now, the_datetime)
+
+    # Only show future tides (tides that haven't happened yet)
+    if now < the_datetime:
         hour = the_datetime.hour % 12
         if hour == 0:
             hour = 12
         am_pm = "AM"
-        if the_datetime.hour / 12 >= 1:
+        if the_datetime.hour >= 12:
             am_pm = "PM"
 
         if item["type"] == "L":
@@ -209,19 +219,42 @@ def get_tide_info(requests):
     print(TIDE_URL)
     pTownTides = []
 
-    # get the Tide information
-    with requests.get(TIDE_URL) as tides:
-        for item in tides.json()["predictions"]:
-            # the_datetime is now a datetime type
-            theTime = CreateTimeString(item, today)
-            if theTime != "":
-                pTownTides.append(theTime)
+    try:
+        # get the Tide information
+        with requests.get(TIDE_URL) as tides:
+            tide_data = tides.json()
+            if "predictions" not in tide_data:
+                print("No predictions data in response")
+                return pTownTides
+
+            for item in tide_data["predictions"]:
+                # the_datetime is now a datetime type
+                theTime = CreateTimeString(item, today)
+                if theTime != "":
+                    pTownTides.append(theTime)
+                    # Limit to 4 future tides
+                    if len(pTownTides) >= 4:
+                        break
+    except Exception as e:
+        print("Error fetching tide data:", e)
+        return pTownTides
 
     return pTownTides
 
 # Display the tide info on the display
 def display_things(display, tides):
     print("entering display_things")
+
+    # Create a hash of the tide data to check if it's changed
+    tide_hash = hash(str(tides))
+
+    # Check if tide data has changed (stored in sleep memory)
+    if alarm.sleep_memory[1] == tide_hash:
+        print("Tide data unchanged, skipping display update")
+        return
+
+    # Store the new hash
+    alarm.sleep_memory[1] = tide_hash
 
     # Create a display group for our screen objects
     g = displayio.Group()
@@ -250,10 +283,6 @@ def display_things(display, tides):
 
     text_area = label.Label(terminalio.FONT, text=text, color=FOREGROUND_COLOR)
 
-    # Set scaling factor for display text
-    my_scale = 1
-
-
     text_group.append(text_area)  # Add this text to the text group
     g.append(text_group)
 
@@ -263,6 +292,9 @@ def display_things(display, tides):
     # Refresh the display to have everything show on the display
     # NOTE: Do not refresh eInk displays more often than 180 seconds!
     display.refresh()
+
+    # Give the e-ink display time to complete the refresh cycle
+    time.sleep(5)
 
     del background_bitmap
     del g
@@ -277,6 +309,13 @@ def display_things(display, tides):
 # Defining main function
 def main():
     gc.enable()
+
+    # Check if we're waking from deep sleep
+    if alarm.wake_alarm:
+        print("Waking from deep sleep")
+    else:
+        print("Starting fresh")
+
     spi = configure_spi()
     #    display_things()
     wifi, pool, ssl_context, requests = configure_wifi_hardware(spi)
@@ -284,8 +323,8 @@ def main():
     wifi_connection = connect_wifi(wifi)
     count = 0
     while True:
-        # It seems like the display controller can get hung up 
-        # if we run into this exception 5 times let's just reset the 
+        # It seems like the display controller can get hung up
+        # if we run into this exception 5 times let's just reset the
         # processor
         if count > 5:
             print("we got 5 exceptions")
@@ -303,12 +342,23 @@ def main():
             start_mem = gc.mem_free()
             print( "Point 2 Available memory: {} bytes".format(start_mem) )
 
-            display_things(display, tides)
-            # sleep for 2 hours and then we'll query again for updates
-            time.sleep(2 * 60 * 60)
+            # Only update display if we have tide data
+            if tides:
+                display_things(display, tides)
+            else:
+                print("No tide data available, skipping display update")
 
-        except:
-            print("we got an exception")
+                        # Disconnect WiFi to save power
+            disconnect_wifi(wifi_connection, pool, ssl_context, requests)
+
+            # Use deep sleep instead of regular sleep to save power
+            sleep_seconds = UPDATE_INTERVAL_HOURS * 60 * 60
+            print(f"Going to deep sleep for {UPDATE_INTERVAL_HOURS} hours...")
+            alarm.sleep_memory[0] = 1  # Set a flag to indicate we've run
+            alarm.exit_and_deep_sleep_until_alarms(alarm.time.TimeAlarm(monotonic_time=time.monotonic() + sleep_seconds))
+
+        except Exception as e:
+            print("we got an exception:", e)
             count = count + 1
 
 
